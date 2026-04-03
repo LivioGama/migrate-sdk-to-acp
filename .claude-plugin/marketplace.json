@@ -1,0 +1,15 @@
+{
+  "name": "migrate-claude-sdk-to-acp",
+  "owner": {
+    "name": "Livio Gamassia",
+    "email": "livio@gamassia.com"
+  },
+  "plugins": [
+    {
+      "name": "migrate-claude-sdk-to-acp",
+      "description": "Migrate Claude CLI/SDK to ACP (Agent Client Protocol) with OAuth-only auth. Covers TypeScript, Go, and Python.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

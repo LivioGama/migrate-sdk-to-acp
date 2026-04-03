@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Voice Swarm</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+		background: #0a0a0a; color: #e0e0e0;
+		display: flex; flex-direction: column; height: 100vh;
+	}
+	#top {
+		display: flex; align-items: center; gap: 16px;
+		padding: 16px 24px; border-bottom: 1px solid #1a1a1a;
+	}
+	h1 { font-size: 16px; font-weight: 500; color: #666; }
+	#status { font-size: 13px; color: #555; margin-left: auto; }
+	#mic-btn {
+		width: 44px; height: 44px; border-radius: 50%;
+		border: 2px solid #333; background: #1a1a1a;
+		cursor: pointer; display: flex; align-items: center;
+		justify-content: center; transition: all 0.2s;
+		font-size: 20px; flex-shrink: 0;
+	}
+	#mic-btn:hover { border-color: #555; }
+	#mic-btn.listening {
+		border-color: #ef4444; background: #1c0a0a;
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+	#mic-btn.working {
+		border-color: #f59e0b; background: #1a1500;
+		animation: spin 2s linear infinite;
+	}
+	@keyframes pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.3); }
+		50% { box-shadow: 0 0 0 12px rgba(239,68,68,0); }
+	}
+	@keyframes spin {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.3); }
+		50% { box-shadow: 0 0 0 12px rgba(245,158,11,0); }
+	}
+	#user-input {
+		padding: 12px 24px; font-size: 14px; color: #888;
+		border-bottom: 1px solid #1a1a1a; min-height: 40px;
+		background: #0d0d0d;
+	}
+	#user-input.active { color: #ccc; }
+	#output {
+		flex: 1; overflow-y: auto; padding: 20px 24px;
+		font-size: 14px; line-height: 1.7; color: #ccc;
+		word-break: break-word;
+	}
+	#output h1, #output h2, #output h3 { color: #e0e0e0; margin: 12px 0 6px; }
+	#output h1 { font-size: 18px; } #output h2 { font-size: 16px; } #output h3 { font-size: 14px; }
+	#output p { margin: 4px 0; }
+	#output code { background: #1a1a1a; padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 12px; color: #f59e0b; }
+	#output pre { background: #111; border: 1px solid #222; border-radius: 6px; padding: 12px; margin: 8px 0; overflow-x: auto; }
+	#output pre code { background: none; padding: 0; color: #ccc; }
+	#output ul, #output ol { padding-left: 20px; margin: 4px 0; line-height: 1.4; }
+	#output li { margin: 0; padding: 0; }
+	#output ul br, #output ol br { display: none; }
+	#output table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; }
+	#output th, #output td { border: 1px solid #333; padding: 6px 10px; text-align: left; }
+	#output th { background: #1a1a1a; color: #e0e0e0; font-weight: 600; }
+	#output tr:nth-child(even) { background: #111; }
+	#output strong { color: #e0e0e0; }
+	#output a { color: #60a5fa; }
+	#output blockquote { border-left: 3px solid #333; padding-left: 12px; color: #888; margin: 8px 0; }
+	#output .thought {
+		color: #666; font-style: italic; font-size: 13px;
+		padding: 4px 0; opacity: 0.7;
+	}
+	#output .tool-call {
+		color: #f59e0b; font-size: 12px; font-family: 'SF Mono', monospace;
+		padding: 4px 8px; margin: 6px 0; background: #1a1700;
+		border-left: 3px solid #f59e0b; border-radius: 0 4px 4px 0;
+	}
+	#output .tool-call.done { border-left-color: #22c55e; color: #22c55e; background: #0a1a0a; }
+	#output .separator {
+		border-top: 1px solid #1a1a1a;
+		margin: 16px 0; color: #555;
+		font-size: 12px; padding-top: 8px;
+	}
+	#output .usage {
+		color: #444; font-size: 11px; text-align: right;
+		padding: 4px 0;
+	}
+	#log {
+		border-top: 1px solid #1a1a1a;
+		max-height: 80px; overflow-y: auto; padding: 6px 16px;
+		font-size: 11px; color: #444; font-family: monospace;
+	}
+</style>
+</head>
+<body>
+<div id="top">
+	<button id="mic-btn">🎤</button>
+	<h1>Voice Swarm</h1>
+	<div id="status">Ready</div>
+</div>
+<div id="user-input"></div>
+<div id="output"></div>
+<div id="log"></div>
+
+<script>
+const btn = document.getElementById('mic-btn');
+const status = document.getElementById('status');
+const userInput = document.getElementById('user-input');
+const output = document.getElementById('output');
+const logEl = document.getElementById('log');
+
+let recognition = null;
+let listening = false;
+let working = false;
+let finalText = '';
+let silenceTimer = null;
+
+// ── Markdown ─────────────────────────────────────────────────────────────────
+
+function renderMd(text) {
+	// Parse tables before escaping
+	text = text.replace(/((?:^\|.+\|$\n?)+)/gm, (block) => {
+		const rows = block.trim().split('\n').filter(r => r.trim());
+		if (rows.length < 2) return block;
+		// Check if row 2 is a separator (|---|---|)
+		if (!/^\|[\s\-:|]+\|$/.test(rows[1])) return block;
+		const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const parseRow = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+		const headers = parseRow(rows[0]);
+		const body = rows.slice(2).map(parseRow);
+		let html = '<table><thead><tr>' + headers.map(h => `<th>${esc(h)}</th>`).join('') + '</tr></thead><tbody>';
+		for (const row of body) html += '<tr>' + row.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>';
+		html += '</tbody></table>';
+		return html;
+	});
+
+	return text
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		// Restore table HTML that was escaped
+		.replace(/&lt;(\/?(table|thead|tbody|tr|th|td))&gt;/g, '<$1>')
+		.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+		.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+		.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+		.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+		.replace(/`([^`]+)`/g, '<code>$1</code>')
+		.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+		.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+		.replace(/^\- (.+)$/gm, '<li>$1</li>')
+		.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+		.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+		.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+		.replace(/\n{3,}/g, '\n\n')
+		.replace(/\n\n/g, '</p><p>')
+		.replace(/\n/g, '<br>')
+		.replace(/(<br>)+$/g, '')
+		.replace(/^(<br>)+/g, '');
+}
+
+let currentResponseEl = null;
+let currentResponseText = '';
+
+function ensureResponseEl() {
+	if (!currentResponseEl) {
+		currentResponseEl = document.createElement('div');
+		currentResponseEl.className = 'response';
+		output.appendChild(currentResponseEl);
+		currentResponseText = '';
+	}
+	return currentResponseEl;
+}
+
+function appendText(text) {
+	ensureResponseEl();
+	currentResponseText += text;
+	currentResponseEl.innerHTML = renderMd(currentResponseText);
+	output.scrollTop = output.scrollHeight;
+}
+
+// ── SSE Stream ───────────────────────────────────────────────────────────────
+
+const sse = new EventSource('/stream');
+sse.onmessage = (e) => {
+	try {
+		const msg = JSON.parse(e.data);
+		switch (msg.type) {
+			case 'connected':
+				addLog('Stream connected');
+				break;
+			case 'start':
+				working = true;
+				btn.className = 'working';
+				status.textContent = 'Working...';
+				currentResponseEl = null;
+				currentResponseText = '';
+				break;
+			case 'thought': {
+				let el = output.querySelector('.thought:last-child');
+				if (!el) { el = document.createElement('div'); el.className = 'thought'; output.appendChild(el); }
+				el.textContent += msg.text;
+				output.scrollTop = output.scrollHeight;
+				break;
+			}
+			case 'text':
+				appendText(msg.text);
+				break;
+			case 'tool_start': {
+				currentResponseEl = null; // break text flow
+				const el = document.createElement('div');
+				el.className = 'tool-call';
+				el.id = `tool-${msg.id}`;
+				el.textContent = `▸ ${msg.name}${msg.title ? ' — ' + msg.title : ''}`;
+				output.appendChild(el);
+				output.scrollTop = output.scrollHeight;
+				break;
+			}
+			case 'tool_info': {
+				const el = document.getElementById(`tool-${msg.id}`);
+				if (el) el.textContent = `▸ ${msg.name} — ${msg.title}`;
+				break;
+			}
+			case 'tool_done': {
+				const el = document.getElementById(`tool-${msg.id}`);
+				if (el) { el.classList.add('done'); el.textContent = el.textContent.replace('▸', '✓'); }
+				break;
+			}
+			case 'usage': {
+				let el = output.querySelector('.usage:last-child');
+				if (!el) { el = document.createElement('div'); el.className = 'usage'; output.appendChild(el); }
+				el.textContent = `context: ${msg.pct}%${msg.cost ? ' · ' + msg.cost : ''}`;
+				break;
+			}
+			case 'done':
+				working = false;
+				btn.className = '';
+				status.textContent = 'Done. Click mic for next.';
+				currentResponseEl = null;
+				const sep = document.createElement('div');
+				sep.className = 'separator';
+				output.appendChild(sep);
+				break;
+		}
+	} catch {}
+};
+
+// ── Voice Recognition ────────────────────────────────────────────────────────
+
+function addLog(msg) {
+	logEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + logEl.textContent.split('\n').slice(0, 10).join('\n');
+}
+
+function initRecognition() {
+	const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!SR) { status.textContent = 'No speech recognition. Use Chrome.'; return null; }
+	const r = new SR();
+	r.continuous = true;
+	r.interimResults = true;
+	r.lang = 'en-US';
+
+	r.onresult = (e) => {
+		let interim = '';
+		finalText = '';
+		for (let i = 0; i < e.results.length; i++) {
+			if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+			else interim += e.results[i][0].transcript;
+		}
+		userInput.textContent = finalText || interim;
+		userInput.className = finalText ? 'active' : '';
+
+		clearTimeout(silenceTimer);
+		if (finalText.trim().length > 0) {
+			silenceTimer = setTimeout(() => {
+				sendPrompt(finalText.trim());
+				stopListening();
+			}, 2000);
+		}
+	};
+
+	r.onerror = (e) => {
+		if (e.error === 'no-speech') return;
+		addLog(`Error: ${e.error}`);
+		stopListening();
+	};
+
+	r.onend = () => { if (listening) try { r.start(); } catch {} };
+	return r;
+}
+
+function startListening() {
+	if (working) return;
+	recognition = initRecognition();
+	if (!recognition) return;
+	listening = true;
+	finalText = '';
+	userInput.textContent = '';
+	userInput.className = '';
+	btn.className = 'listening';
+	status.textContent = 'Listening...';
+	recognition.start();
+}
+
+function stopListening() {
+	listening = false;
+	clearTimeout(silenceTimer);
+	if (!working) btn.className = '';
+	if (!working) status.textContent = 'Ready';
+	if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
+}
+
+async function sendPrompt(prompt) {
+	addLog(`Sending: ${prompt.slice(0, 60)}`);
+	// Add a separator + user prompt in output
+	const sep = document.createElement('div');
+	sep.className = 'separator';
+	sep.textContent = `You: ${prompt}`;
+	output.appendChild(sep);
+
+	try {
+		const res = await fetch('/prompt', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ prompt }),
+		});
+		const data = await res.json();
+		if (!data.ok) addLog(`Error: ${data.error}`);
+	} catch (err) {
+		addLog(`Network error: ${err.message}`);
+	}
+}
+
+btn.addEventListener('click', () => {
+	if (working) return;
+	if (listening) {
+		if (finalText.trim().length > 3) sendPrompt(finalText.trim());
+		stopListening();
+	} else {
+		startListening();
+	}
+});
+</script>
+</body>
+</html>

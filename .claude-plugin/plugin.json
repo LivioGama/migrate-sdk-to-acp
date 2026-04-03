@@ -1,0 +1,9 @@
+{
+  "name": "migrate-claude-sdk-to-acp",
+  "description": "Migrate Claude CLI/SDK to ACP (Agent Client Protocol) with OAuth-only auth. Covers TypeScript, Go, and Python with ready-to-use client implementations.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Livio Gamassia",
+    "email": "livio@gamassia.com"
+  }
+}
